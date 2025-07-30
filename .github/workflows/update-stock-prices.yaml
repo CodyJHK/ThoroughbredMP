@@ -38,15 +38,3 @@ jobs:
         DATABASE_ID: ${{ secrets.DATABASE_ID }}
       run: |
         python update_stocks.py
-    
-    - name: Notify on failure
-      if: failure()
-      uses: actions/github-script@v6
-      with:
-        script: |
-          github.rest.issues.create({
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-            title: 'Stock Price Update Failed',
-            body: 'The automated stock price update failed. Please check the logs.'
-          })
