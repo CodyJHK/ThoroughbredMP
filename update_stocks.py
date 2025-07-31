@@ -184,7 +184,7 @@ def main():
             if info["previousClose"] > 0:
                 chg = round((info["currentPrice"] - info["previousClose"]) / info["previousClose"] * 100, 2)
             mcap_log = f" | 시총 {info['marketCap']}억" if info["marketCap"] > 0 else ""
-            fx_log = f" | USDKRW {usdk rw:.2f}" if usdkrw else ""
+            fx_log = f" | USDKRW {usdkrw:.2f}" if isinstance(usdkrw, (int, float)) else ""
             print(f"[{i}/{len(rows)}] {sym} ✓ {info['currentPrice']:.2f} ({chg:+.2f}%){mcap_log}{fx_log} | {info.get('name','')}")
             ok += 1
         except Exception as e:
