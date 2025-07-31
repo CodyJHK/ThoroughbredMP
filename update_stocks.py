@@ -25,20 +25,32 @@ def get_stock_data(ticker):
         stock = yf.Ticker(ticker)
         info = stock.info
         
-        # 기본값 설정
-        data = {
-            'currentPrice': info.get('currentPrice', info.get('regularMarketPrice', 0)),
-            'previousClose': info.get('previousClose', info.get('regularMarketPreviousClose', 0)),
-            'fiftyTwoWeekHigh': info.get('fiftyTwoWeekHigh', 0),
-            'fiftyTwoWeekLow': info.get('fiftyTwoWeekLow', 0),
-            'marketCap': info.get('marketCap', 0)
-        }
+        # 현재가 가져오기 - 여러 필드 시도
+        current_price = info.get('currentPrice') or info.get('regularMarketPrice') or info.get('price', 0)
         
         # 현재가가 없으면 최근 종가 사용
-        if data['currentPrice'] == 0:
+        if current_price == 0:
             hist = stock.history(period="1d")
             if not hist.empty:
-                data['currentPrice'] = hist['Close'].iloc[-1]
+                current_price = float(hist['Close'].iloc[-1])
+        
+        # 전일 종가
+        previous_close = info.get('previousClose') or info.get('regularMarketPreviousClose', 0)
+        
+        # 시가총액 (억 단위로 변환)
+        market_cap = info.get('marketCap', 0)
+        if market_cap > 0:
+            market_cap = round(market_cap / 100000000)  # 억 단위
+        
+        data = {
+            'currentPrice': current_price,
+            'previousClose': previous_close,
+            'marketCap': market_cap
+        }
+        
+        print(f"  현재가: ${current_price:.2f}")
+        print(f"  전일종가: ${previous_close:.2f}")
+        print(f"  시가총액: {market_cap}억")
         
         return data
     except Exception as e:
@@ -48,11 +60,15 @@ def get_stock_data(ticker):
 def update_notion_page(page_id, stock_data):
     """Notion 페이지 업데이트"""
     try:
+        # 변동률 계산
+        if stock_data['previousClose'] > 0:
+            change_percent = round((stock_data['currentPrice'] - stock_data['previousClose']) / stock_data['previousClose'] * 100, 2)
+        else:
+            change_percent = 0
+        
         properties = {
             "현재가": {"number": stock_data['currentPrice']},
             "전일종가": {"number": stock_data['previousClose']},
-            "52주최고": {"number": stock_data['fiftyTwoWeekHigh']},
-            "52주최저": {"number": stock_data['fiftyTwoWeekLow']},
             "시가총액": {"number": stock_data['marketCap']},
             "업데이트시간": {"date": {"start": datetime.now(KST).isoformat()}}
         }
@@ -61,6 +77,8 @@ def update_notion_page(page_id, stock_data):
             page_id=page_id,
             properties=properties
         )
+        
+        print(f"  ✓ 업데이트 완료 (변동률: {change_percent:+.2f}%)")
         return True
     except Exception as e:
         print(f"Error updating page {page_id}: {str(e)}")
@@ -68,7 +86,8 @@ def update_notion_page(page_id, stock_data):
 
 def main():
     """메인 실행 함수"""
-    print(f"Starting stock price update at {datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S KST')}")
+    print(f"=== 주식 가격 업데이트 시작 ===")
+    print(f"시간: {datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S KST')}\n")
     
     try:
         # 데이터베이스에서 모든 페이지 가져오기
@@ -76,54 +95,55 @@ def main():
         pages = response.get('results', [])
         
         if not pages:
-            print("No pages found in the database")
+            print("데이터베이스에 항목이 없습니다.")
             return
+        
+        print(f"총 {len(pages)}개 종목 발견\n")
         
         updated_count = 0
         error_count = 0
+        skipped_count = 0
         
         for page in pages:
             page_id = page['id']
             properties = page.get('properties', {})
             
-            # 티커 심볼 가져오기
-            ticker_prop = properties.get('티커', {})
-            if ticker_prop.get('type') == 'rich_text' and ticker_prop.get('rich_text'):
-                ticker = ticker_prop['rich_text'][0]['text']['content']
+            # 종목명 가져오기 (티커 대신)
+            title_prop = properties.get('티커', {})
+            if title_prop.get('type') == 'title' and title_prop.get('title'):
+                ticker = title_prop['title'][0]['text']['content'].strip().upper()
+                print(f"처리 중: {ticker}")
             else:
-                # 티커가 없으면 종목명에서 추출 시도
-                title_prop = properties.get('종목명', {})
-                if title_prop.get('type') == 'title' and title_prop.get('title'):
-                    title = title_prop['title'][0]['text']['content']
-                    print(f"No ticker found for {title}, skipping...")
-                    continue
-                else:
-                    print(f"No ticker or title found for page {page_id}, skipping...")
-                    continue
-            
-            print(f"Processing {ticker}...")
+                print(f"티커를 찾을 수 없습니다 (페이지 ID: {page_id})")
+                skipped_count += 1
+                continue
             
             # 주식 데이터 가져오기
             stock_data = get_stock_data(ticker)
             
-            if stock_data:
+            if stock_data and stock_data['currentPrice'] > 0:
                 # Notion 페이지 업데이트
                 if update_notion_page(page_id, stock_data):
-                    print(f"✓ Successfully updated {ticker}")
                     updated_count += 1
                 else:
-                    print(f"✗ Failed to update {ticker}")
                     error_count += 1
             else:
-                print(f"✗ Failed to fetch data for {ticker}")
+                print(f"  ✗ 데이터를 가져올 수 없습니다")
                 error_count += 1
+            
+            print()  # 줄바꿈
         
-        print(f"\nUpdate complete!")
-        print(f"Updated: {updated_count} pages")
-        print(f"Errors: {error_count} pages")
+        # 결과 요약
+        print("=== 업데이트 완료 ===")
+        print(f"성공: {updated_count}개")
+        print(f"실패: {error_count}개")
+        print(f"건너뜀: {skipped_count}개")
+        print(f"총 처리: {len(pages)}개")
         
     except Exception as e:
         print(f"Fatal error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 if __name__ == "__main__":
