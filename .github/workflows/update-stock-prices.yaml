@@ -1,28 +1,33 @@
 name: Update Stock Prices
 
 on:
-  workflow_dispatch:
+  schedule:
+    # 한국시간 기준 평일 오전 9시, 오후 3시 30분
+    - cron: '0 0,6 * * 1-5'  # UTC 기준
+  workflow_dispatch:  # 수동 실행 가능
 
 jobs:
   update-stocks:
     runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v3
     
-    - uses: actions/setup-python@v4
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+    
+    - name: Set up Python with pip cache
+      uses: actions/setup-python@v4
       with:
         python-version: '3.9'
+        cache: 'pip'  # 자동 pip 캐시
     
     - name: Install dependencies
       run: |
-        pip install notion-client yfinance pytz
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
     
     - name: Update stock prices
       env:
         NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
         DATABASE_ID: ${{ secrets.DATABASE_ID }}
       run: |
-        echo "Starting stock update..."
-        echo "Token exists: ${{ secrets.NOTION_TOKEN != '' }}"
-        echo "DB ID exists: ${{ secrets.DATABASE_ID != '' }}"
         python update_stocks.py
