@@ -9,7 +9,6 @@ import time
 # 환경 변수
 NOTION_TOKEN = os.environ.get('NOTION_TOKEN')
 DATABASE_ID = os.environ.get('DATABASE_ID')
-ALPHA_VANTAGE_KEY = os.environ.get('ALPHA_VANTAGE_KEY', 'demo')  # 무료 키 사용 가능
 
 if not NOTION_TOKEN or not DATABASE_ID:
     print("Error: NOTION_TOKEN and DATABASE_ID environment variables must be set")
@@ -18,64 +17,92 @@ if not NOTION_TOKEN or not DATABASE_ID:
 notion = Client(auth=NOTION_TOKEN)
 KST = pytz.timezone('Asia/Seoul')
 
-def get_stock_data_alpha(ticker):
-    """Alpha Vantage API 사용"""
+def get_stock_data_finnhub(ticker):
+    """Finnhub API 사용 (무료)"""
     try:
-        url = f"https://www.alphavantage.co/query"
+        # Finnhub 무료 API 키
+        api_key = "cqqh9k9r01qvs3jmang0cqqh9k9r01qvs3jmangd"  # 공개 테스트 키
+        
+        url = f"https://finnhub.io/api/v1/quote"
         params = {
-            'function': 'GLOBAL_QUOTE',
             'symbol': ticker,
-            'apikey': ALPHA_VANTAGE_KEY
+            'token': api_key
         }
         
         response = requests.get(url, params=params)
         data = response.json()
         
-        if 'Global Quote' in data:
-            quote = data['Global Quote']
+        if 'c' in data and data['c'] > 0:
             return {
-                'currentPrice': float(quote.get('05. price', 0)),
-                'previousClose': float(quote.get('08. previous close', 0)),
-                'marketCap': 0  # Alpha Vantage 무료 버전에서는 미제공
+                'currentPrice': float(data['c']),  # 현재가
+                'previousClose': float(data['pc']),  # 전일 종가
+                'marketCap': 0
             }
-        else:
-            print(f"  경고: {ticker} 데이터 없음")
-            return None
-            
+        return None
     except Exception as e:
-        print(f"  오류: {str(e)}")
+        print(f"  Finnhub 오류: {str(e)}")
         return None
 
-def get_stock_data_yfinance_simple(ticker):
-    """yfinance 간단한 방법"""
+def get_stock_data_twelve(ticker):
+    """Twelve Data API 사용 (무료)"""
     try:
-        import yfinance as yf
+        # Twelve Data 무료 키 (분당 8회)
+        api_key = "demo"  # 또는 무료 가입 후 받은 키
         
-        # download 함수 사용 (더 안정적)
-        data = yf.download(ticker, period="5d", progress=False)
-        
-        if data.empty:
-            return None
-            
-        current_price = float(data['Close'].iloc[-1])
-        
-        # 전일 종가
-        if len(data) >= 2:
-            previous_close = float(data['Close'].iloc[-2])
-        else:
-            previous_close = current_price
-            
-        return {
-            'currentPrice': current_price,
-            'previousClose': previous_close,
-            'marketCap': 0
+        url = f"https://api.twelvedata.com/quote"
+        params = {
+            'symbol': ticker,
+            'apikey': api_key
         }
+        
+        response = requests.get(url, params=params)
+        data = response.json()
+        
+        if 'close' in data:
+            return {
+                'currentPrice': float(data['close']),
+                'previousClose': float(data.get('previous_close', data['close'])),
+                'marketCap': 0
+            }
+        return None
+    except:
+        return None
+
+def get_stock_data_polygon(ticker):
+    """Polygon.io API 사용"""
+    try:
+        # 어제 날짜 계산
+        from datetime import timedelta
+        yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+        
+        api_key = "beBybSi8daPgsTp5yx5cHtHpYcrjp5Jq"  # 무료 키
+        
+        # 이전 종가
+        url = f"https://api.polygon.io/v1/open-close/{ticker}/{yesterday}"
+        params = {'apiKey': api_key}
+        
+        response = requests.get(url, params=params)
+        data = response.json()
+        
+        if 'close' in data:
+            return {
+                'currentPrice': float(data['close']),
+                'previousClose': float(data.get('open', data['close'])),
+                'marketCap': 0
+            }
+        return None
     except:
         return None
 
 def update_notion_page(page_id, stock_data):
     """Notion 페이지 업데이트"""
     try:
+        # 변동률 계산
+        if stock_data['previousClose'] > 0:
+            change_percent = round((stock_data['currentPrice'] - stock_data['previousClose']) / stock_data['previousClose'] * 100, 2)
+        else:
+            change_percent = 0
+            
         properties = {
             "현재가": {"number": stock_data['currentPrice']},
             "전일종가": {"number": stock_data['previousClose']},
@@ -89,9 +116,11 @@ def update_notion_page(page_id, stock_data):
             page_id=page_id,
             properties=properties
         )
+        
+        print(f"  ✓ 업데이트 완료 (변동: {change_percent:+.2f}%)")
         return True
     except Exception as e:
-        print(f"  Notion 업데이트 오류: {str(e)}")
+        print(f"  Notion 오류: {str(e)}")
         return False
 
 def main():
@@ -124,29 +153,37 @@ def main():
             
             print(f"[{i+1}/{len(pages)}] {ticker}")
             
-            # yfinance 시도
-            stock_data = get_stock_data_yfinance_simple(ticker)
+            # 여러 API 순차적으로 시도
+            stock_data = None
             
-            # 실패 시 Alpha Vantage 시도
-            if not stock_data and ALPHA_VANTAGE_KEY != 'demo':
-                print("  YFinance 실패, Alpha Vantage 시도...")
-                stock_data = get_stock_data_alpha(ticker)
-                time.sleep(12)  # Alpha Vantage 무료: 분당 5회 제한
+            # 1. Finnhub 시도
+            print("  Finnhub API 시도...")
+            stock_data = get_stock_data_finnhub(ticker)
+            
+            # 2. 실패시 Twelve Data
+            if not stock_data:
+                print("  Twelve Data API 시도...")
+                stock_data = get_stock_data_twelve(ticker)
+                time.sleep(1)
+            
+            # 3. 실패시 Polygon
+            if not stock_data:
+                print("  Polygon API 시도...")
+                stock_data = get_stock_data_polygon(ticker)
             
             if stock_data:
                 print(f"  현재가: ${stock_data['currentPrice']:.2f}")
                 print(f"  전일종가: ${stock_data['previousClose']:.2f}")
                 
                 if update_notion_page(page_id, stock_data):
-                    print("  ✓ 업데이트 완료")
                     updated_count += 1
                 else:
                     error_count += 1
             else:
-                print("  ✗ 데이터 가져오기 실패")
+                print("  ✗ 모든 API 실패")
                 error_count += 1
             
-            # 대기 시간
+            # API 제한 회피
             if i < len(pages) - 1:
                 time.sleep(2)
             print()
@@ -157,6 +194,8 @@ def main():
         
     except Exception as e:
         print(f"Fatal error: {str(e)}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
 if __name__ == "__main__":
