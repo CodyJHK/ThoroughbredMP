@@ -3,7 +3,7 @@ name: Update Stock Prices
 on:
   schedule:
     # 한국시간 기준 평일 오전 9시, 오후 3시 30분
-    - cron: '0 0,6 * * 1-5'  # UTC 기준
+    - cron: '0 7,22 * * 1-5'  # UTC 기준
   workflow_dispatch:  # 수동 실행 가능
 
 jobs:
