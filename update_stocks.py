@@ -25,10 +25,12 @@ FMP_FX_PRICE  = "https://financialmodelingprep.com/api/v3/forex/{}"       # fall
 def fetch_all_pages(database_id: str):
     pages, start = [], None
     while True:
-        payload = {"database_id": database_id}
+        kwargs = {"database_id": database_id}
         if start:
-            payload["start_cursor"] = start
-        resp = notion.databases.query(**payload)
+            kwargs["start_cursor"] = start
+            
+        resp = notion.databases.query(**kwargs)
+        
         pages.extend(resp.get("results", []))
         if not resp.get("has_more"):
             break
@@ -196,3 +198,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
