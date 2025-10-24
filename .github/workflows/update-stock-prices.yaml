@@ -27,10 +27,5 @@ jobs:
           pip install requests==2.32.3
           pip install pytz==2024.1
       
-      - name: Verify versions
-        run: |
-          python -c "import notion_client; print(f'notion-client: {notion_client.__version__}')"
-          python -c "import requests; print(f'requests: {requests.__version__}')"
-      
       - name: Update stock prices
         run: python update_stocks.py
