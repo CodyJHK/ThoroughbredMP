@@ -15,18 +15,21 @@ jobs:
       FMP_API_KEY:  ${{ secrets.FMP_API_KEY }}
     steps:
       - uses: actions/checkout@v4
-
+      
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          cache: 'pip'
-
+          # cache: 'pip'  ← 이 줄 삭제 또는 주석 처리
+      
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip cache purge
-          pip install --no-cache-dir --force-reinstall -r requirements.txt
-
+          pip install --no-cache-dir -r requirements.txt
+      
+      - name: Verify package versions
+        run: |
+          pip list | grep notion
+      
       - name: Update stock prices
         run: python update_stocks.py
