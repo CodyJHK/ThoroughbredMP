@@ -1,18 +1,17 @@
 name: Update Stock Prices
-
 on:
   schedule:
-    # 한국시간 기준 평일 오전 9시, 오후 3시 30분
-    - cron: '0 7,22 * * 1-5'  # UTC 기준
-  workflow_dispatch:  # 수동 실행 가능
+    - cron: '0 7,22 * * 1-5'
+  workflow_dispatch:
 
 jobs:
   update-stocks:
     runs-on: ubuntu-latest
     env:
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
-      DATABASE_ID:  ${{ secrets.DATABASE_ID }}
-      FMP_API_KEY:  ${{ secrets.FMP_API_KEY }}
+      DATABASE_ID: ${{ secrets.DATABASE_ID }}
+      FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
+    
     steps:
       - uses: actions/checkout@v4
       
@@ -20,21 +19,18 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-          # cache: 'pip'  ← 이 줄 삭제 또는 주석 처리
       
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --no-cache-dir -r requirements.txt
+          pip install notion-client==2.2.1
+          pip install requests==2.32.3
+          pip install pytz==2024.1
       
-      - name: Verify package versions
+      - name: Verify versions
         run: |
-          pip list | grep notion
+          python -c "import notion_client; print(f'notion-client: {notion_client.__version__}')"
+          python -c "import requests; print(f'requests: {requests.__version__}')"
       
       - name: Update stock prices
         run: python update_stocks.py
-
-      - name: Debug - Check installed version
-        run: |
-          python -c "import notion_client; print(f'notion-client version: {notion_client.__version__}')"
-          python -c "from notion_client import Client; c = Client(auth='test'); print(dir(c.databases))"
