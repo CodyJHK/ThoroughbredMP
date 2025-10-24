@@ -33,3 +33,8 @@ jobs:
       
       - name: Update stock prices
         run: python update_stocks.py
+
+      - name: Debug - Check installed version
+        run: |
+          python -c "import notion_client; print(f'notion-client version: {notion_client.__version__}')"
+          python -c "from notion_client import Client; c = Client(auth='test'); print(dir(c.databases))"
