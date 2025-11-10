@@ -50,26 +50,78 @@ def parse_ticker_from_page(page: dict) -> str:
 def fetch_fmp_quotes(symbols):
     if not symbols:
         return {}
-    url = FMP_QUOTE_URL.format(",".join(symbols))
-    r = requests.get(url, params={"apikey": FMP_API_KEY}, timeout=20)
-    r.raise_for_status()
-    data = r.json() or []
+
+    # 일괄 조회 시도
+    try:
+        url = FMP_QUOTE_URL.format(",".join(symbols))
+        r = requests.get(url, params={"apikey": FMP_API_KEY}, timeout=20)
+        r.raise_for_status()
+        data = r.json() or []
+        out = {}
+        for it in data:
+            sym  = (it.get("symbol") or "").upper()
+            curr = it.get("price")
+            prev = it.get("previousClose")
+            mcap = it.get("marketCap") or 0
+            name = it.get("name") or sym
+            curr = float(curr) if curr is not None else 0.0
+            prev = float(prev) if prev is not None else curr
+            mcap_eok = round(mcap / 100_000_000) if mcap and mcap > 0 else 0
+            out[sym] = {
+                "currentPrice": curr,
+                "previousClose": prev,
+                "marketCap": mcap_eok,
+                "name": name,
+            }
+        return out
+    except requests.exceptions.HTTPError as e:
+        if e.response.status_code == 403:
+            print("일괄 조회 실패 (403). 개별 조회로 전환합니다...")
+            # 개별 조회로 폴백
+            return fetch_fmp_quotes_individually(symbols)
+        else:
+            raise
+
+def fetch_fmp_quotes_individually(symbols):
+    """티커를 개별적으로 조회 (403 에러 시 폴백)"""
+    import time
     out = {}
-    for it in data:
-        sym  = (it.get("symbol") or "").upper()
-        curr = it.get("price")
-        prev = it.get("previousClose")
-        mcap = it.get("marketCap") or 0
-        name = it.get("name") or sym
-        curr = float(curr) if curr is not None else 0.0
-        prev = float(prev) if prev is not None else curr
-        mcap_eok = round(mcap / 100_000_000) if mcap and mcap > 0 else 0
-        out[sym] = {
-            "currentPrice": curr,
-            "previousClose": prev,
-            "marketCap": mcap_eok,
-            "name": name,
-        }
+    total = len(symbols)
+
+    for idx, sym in enumerate(symbols, 1):
+        try:
+            url = FMP_QUOTE_URL.format(sym)
+            r = requests.get(url, params={"apikey": FMP_API_KEY}, timeout=20)
+            r.raise_for_status()
+            data = r.json() or []
+
+            if data and isinstance(data, list) and len(data) > 0:
+                it = data[0]
+                curr = it.get("price")
+                prev = it.get("previousClose")
+                mcap = it.get("marketCap") or 0
+                name = it.get("name") or sym
+                curr = float(curr) if curr is not None else 0.0
+                prev = float(prev) if prev is not None else curr
+                mcap_eok = round(mcap / 100_000_000) if mcap and mcap > 0 else 0
+                out[sym] = {
+                    "currentPrice": curr,
+                    "previousClose": prev,
+                    "marketCap": mcap_eok,
+                    "name": name,
+                }
+                print(f"  [{idx}/{total}] {sym} 조회 완료")
+            else:
+                print(f"  [{idx}/{total}] {sym} 데이터 없음")
+
+            # Rate limit 방지: 0.3초 대기
+            if idx < total:
+                time.sleep(0.3)
+
+        except Exception as e:
+            print(f"  [{idx}/{total}] {sym} 조회 실패: {e}")
+            continue
+
     return out
 
 def _extract_fx_price(obj):
