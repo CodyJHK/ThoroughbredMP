@@ -10,7 +10,6 @@ jobs:
     env:
       NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
       DATABASE_ID: ${{ secrets.DATABASE_ID }}
-      FMP_API_KEY: ${{ secrets.FMP_API_KEY }}
     
     steps:
       - uses: actions/checkout@v4
@@ -23,9 +22,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install notion-client==2.2.1
-          pip install requests==2.32.3
-          pip install pytz==2024.1
+          pip install -r requirements.txt
       
       - name: Update stock prices
         run: python update_stocks.py

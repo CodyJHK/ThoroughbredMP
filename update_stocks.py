@@ -2,25 +2,19 @@ import os
 import sys
 from datetime import datetime
 import pytz
-import requests
+import yfinance as yf
 from notion_client import Client
 
 # ── 환경 변수 ─────────────────────────────────────────────
 NOTION_TOKEN = os.environ.get('NOTION_TOKEN')
 DATABASE_ID  = os.environ.get('DATABASE_ID')
-FMP_API_KEY  = os.environ.get('FMP_API_KEY')
-if not NOTION_TOKEN or not DATABASE_ID or not FMP_API_KEY:
-    print("Error: NOTION_TOKEN, DATABASE_ID, FMP_API_KEY must be set")
+if not NOTION_TOKEN or not DATABASE_ID:
+    print("Error: NOTION_TOKEN, DATABASE_ID must be set")
     sys.exit(1)
 
 # ── Notion / TZ ───────────────────────────────────────────
 notion = Client(auth=NOTION_TOKEN)
 KST = pytz.timezone("Asia/Seoul")
-
-# ── FMP endpoints ─────────────────────────────────────────
-FMP_QUOTE_URL = "https://financialmodelingprep.com/api/v3/quote/{}"     # stocks (batch)
-FMP_FX_LAST   = "https://financialmodelingprep.com/api/v4/forex/last/{}"  # e.g., USDKRW
-FMP_FX_PRICE  = "https://financialmodelingprep.com/api/v3/forex/{}"       # fallback
 
 def fetch_all_pages(database_id: str):
     pages, start = [], None
@@ -47,77 +41,49 @@ def parse_ticker_from_page(page: dict) -> str:
     t = (items[0].get("text", {}) or {}).get("content", "") or ""
     return t.strip().upper()
 
-def fetch_fmp_quotes(symbols):
+def fetch_yahoo_quotes(symbols):
+    """Yahoo Finance를 사용하여 주식 가격 조회"""
     if not symbols:
         return {}
-    url = FMP_QUOTE_URL.format(",".join(symbols))
-    r = requests.get(url, params={"apikey": FMP_API_KEY}, timeout=20)
-    r.raise_for_status()
-    data = r.json() or []
+
     out = {}
-    for it in data:
-        sym  = (it.get("symbol") or "").upper()
-        curr = it.get("price")
-        prev = it.get("previousClose")
-        mcap = it.get("marketCap") or 0
-        name = it.get("name") or sym
-        curr = float(curr) if curr is not None else 0.0
-        prev = float(prev) if prev is not None else curr
-        mcap_eok = round(mcap / 100_000_000) if mcap and mcap > 0 else 0
-        out[sym] = {
-            "currentPrice": curr,
-            "previousClose": prev,
-            "marketCap": mcap_eok,
-            "name": name,
-        }
+    for sym in symbols:
+        try:
+            ticker = yf.Ticker(sym)
+            info = ticker.info
+
+            # 현재가
+            curr = info.get("currentPrice") or info.get("regularMarketPrice") or 0.0
+            # 전일종가
+            prev = info.get("previousClose") or info.get("regularMarketPreviousClose") or curr
+            # 시가총액 (억 단위로 변환)
+            mcap = info.get("marketCap") or 0
+            mcap_eok = round(mcap / 100_000_000) if mcap and mcap > 0 else 0
+            # 종목명
+            name = info.get("longName") or info.get("shortName") or sym
+
+            if curr > 0:
+                out[sym] = {
+                    "currentPrice": float(curr),
+                    "previousClose": float(prev),
+                    "marketCap": mcap_eok,
+                    "name": name,
+                }
+        except Exception as e:
+            print(f"  {sym}: 조회 실패 - {e}")
+            continue
+
     return out
 
-def _extract_fx_price(obj):
-    # 가능한 키 우선순위: price > rate/exchangeRate > (bid+ask)/2 > bid > ask
-    for k in ("price", "rate", "exchangeRate"):
-        v = obj.get(k)
-        if isinstance(v, (int, float)):
-            return float(v)
-    bid, ask = obj.get("bid"), obj.get("ask")
-    if isinstance(bid, (int, float)) and isinstance(ask, (int, float)):
-        return (float(bid) + float(ask)) / 2.0
-    if isinstance(bid, (int, float)):
-        return float(bid)
-    if isinstance(ask, (int, float)):
-        return float(ask)
-    return None
-
 def fetch_usdkrw():
-    # 1) v4 last 우선
+    """Yahoo Finance를 사용하여 USDKRW 환율 조회"""
     try:
-        r = requests.get(FMP_FX_LAST.format("USDKRW"),
-                         params={"apikey": FMP_API_KEY}, timeout=15)
-        r.raise_for_status()
-        data = r.json()
-        if isinstance(data, dict):
-            p = _extract_fx_price(data)
-        elif isinstance(data, list) and data:
-            p = _extract_fx_price(data[0])
-        else:
-            p = None
-        if p:
-            return float(p)
-    except Exception:
-        pass
-    # 2) v3 forex 폴백
-    try:
-        r = requests.get(FMP_FX_PRICE.format("USDKRW"),
-                         params={"apikey": FMP_API_KEY}, timeout=15)
-        r.raise_for_status()
-        data = r.json()
-        if isinstance(data, dict):
-            p = _extract_fx_price(data)
-        elif isinstance(data, list) and data:
-            p = _extract_fx_price(data[0])
-        else:
-            p = None
-        if p:
-            return float(p)
+        ticker = yf.Ticker("USDKRW=X")
+        info = ticker.info
+        # 현재 환율
+        rate = info.get("regularMarketPrice") or info.get("currentPrice")
+        if rate:
+            return float(rate)
     except Exception:
         pass
     return None
@@ -163,13 +129,14 @@ def main():
         print("유효한 티커가 없습니다.")
         return
 
-    # 배치 조회
+    # Yahoo Finance 조회
     uniq = sorted(set(symbols))
-    print(f"일괄 조회 대상: {len(uniq)}개 티커")
+    print(f"\nYahoo Finance 조회 시작: {len(uniq)}개 티커")
     try:
-        data_map = fetch_fmp_quotes(uniq)
+        data_map = fetch_yahoo_quotes(uniq)
+        print(f"조회 완료: {len(data_map)}개 성공\n")
     except Exception as e:
-        print(f"FMP 조회 실패: {e}")
+        print(f"Yahoo Finance 조회 실패: {e}")
         sys.exit(1)
 
     # 페이지별 업데이트
